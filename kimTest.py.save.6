@@ -1,0 +1,128 @@
+import socket
+import MySQLdb
+import mibanda
+import time
+import os
+import sys
+
+#buttonSrc = os.system('python /home/edison/switch.py')
+
+#if not buttonSrc == 0:
+#	print >> sys.stderr, 'error occured : ', buttonSrc
+
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.bind(("", 5005))
+server_socket.listen(5)
+print("wating...")
+db=MySQLdb.connect('localhost','root','root','kim')
+#connect database schema
+cursor=db.cursor()
+cursor.execute("USE kim")
+
+#connect miband using bluetooth
+sd=mibanda.DiscoveryService()
+
+device=mibanda.BandDevice("88:0f:10:96:b1:4b", "MI")
+device.connect()
+print ("connect miband")
+
+#connect edison-android
+while 1:
+	client_socket, address=server_socket.accept()
+	print ("connect from" ,address)
+	connectEvent=0
+	countLoop=0
+	data=client_socket.recv(1024)
+	countTime=0
+	print(data)
+	
+	while 1:
+		if connectEvent==0:
+			data2=data.split('.')
+			btnCommand = data2[0]
+			averageRange=(Height*0.37 + Height-100)/2 #walk range
+			connectEvent=1
+
+			while True:
+				# player press button
+				data2 = data.split('.')
+
+				if data2 == 'start': #if player press start button
+						print "Start button is pressed"
+						tmpStep1 = device.getSteps()
+					elif data2 == 'end': # if player press ending button
+						print "End button is pressed"
+						maxAvg = 0
+						minAvg = 0
+
+						tmpStep2 = device.getSteps()
+						totalSteps = tmpStep2 - tmpStep1
+						move = ((Height-100)*totalSteps)/100 # player's moving distance
+						# save move data to kim DB
+						db2 = MySQLdb.connect ('localhost', 'root', 'root', 'kim')
+						cursor2 = db2.cursor()
+						cursor2.execute("USE kim")
+
+						countStr = "select Count(move) from value1"
+						cursor2.execute(countStr)
+						val1CountTmp = cursor2.fetchone()
+						val1Count = int(''.join(map(str,val1CountTmp))) 
+						# calculate player's table size
+						# first, compare max, min <-> move data
+						avgCountStr = "select Count(avg) from value2" # calculate value2's size
+						cursor2.execute(avgCountStr)
+						avgCountTmp = cursor2.fetchone()
+						avgCount = int(''.join(map(str,avgCountTmp)))
+
+						if avgCount == 0: # if no data in value2's avg columm / initial case
+							insertMaxAvgStr = "INSERT INTO (value2) VALUES (%d)" % (move)
+							cursor2.execute(insertMaxAvgStr)
+							db2.commit()
+							insertMinAvgStr = "INSERT INTO (value2) VALUES (%d)" % (move)
+							cursor2.execute(insertMinAvgStr)
+							db2.commit()
+							insertMoveStr = "INSERT INTO (value1) VALUES (%d)" % (move)
+							cursor2.execute(insertMoveStr)
+							db2.commit()
+						else: # not initial case
+							avgStr = "select * from value2"
+							cursor2.execute(avgStr)
+							tmpAvg = cursor2.fetchall()
+							maxAvg = tmpAvg[0][0]
+							minAvg = tmpAvg[1][0]
+							# calculate player's max, min conditions and compare recent move data
+							if move > maxAvg:
+								maxAvg = (move+maxAvg)/2
+							elif move < minAvg:
+								minAvg = (move+minAvg)/2
+							else:
+								tmpMaxMove = maxAvg-move
+								tmpMinMove = move-minAvg
+								if tmpMaxMove > tmpMinMove:
+									minAvg = (move+minAvg)/2
+								elif tmpMaxMove < tmpMinMove:
+									maxAvg = (move+maxAvg)/2
+						delVal2Str = "delete from value2"
+						cursor2.execute(delVal2Str)
+						db2.commit()
+						insertMaxAvgStr = "INSERT INTO (value2) VALUES (%d)" % (maxAvg)
+						cursor2.execute(insertMaxAvgStr)
+						db2.commit()
+						insertMinAvgStr = "INSERT INTO (value2) VALUES (%d)" % (minAvg)
+						cursor2.execute(insertMinAvgStr)
+						db2.commit()
+						if val1Count == 4:
+							delVal1Str = "delete from value1"
+							cursor2.execute(delVal1Str)
+							db2.commit()
+							insertMoveStr = "INSERT INTO (value1) VALUES (%d)" % (move)
+							cursor2.execute(insertMoveStr)
+							db2.commit()
+						else:
+							insertMoveStr = "INSERT INTO (value1) VALUES (%d)" % (move)
+							cursor2.execute(insertMoveStr)
+							db2.commit()
+						break	
+#db.close()
+#server_socket.close()
+print("close")
